@@ -47,6 +47,8 @@ public class IPermissionManagerProxy extends BinderInvocationStub {
         addMethodHook(new ValueMethodProxy("removeOnPermissionsChangeListener", 0));
         addMethodHook(new ValueMethodProxy("checkDeviceIdentifierAccess", false));
         addMethodHook(new PkgMethodProxy("shouldShowRequestPermissionRationale"));
+        addMethodHook(new ValueMethodProxy("checkPermission", PackageManager.PERMISSION_GRANTED));
+        addMethodHook(new ValueMethodProxy("checkUidPermission", PackageManager.PERMISSION_GRANTED));
         if (BuildCompat.isOreo()) {
             addMethodHook(new ValueMethodProxy("notifyDexLoad", 0));
             addMethodHook(new ValueMethodProxy("notifyPackageUse", 0));
