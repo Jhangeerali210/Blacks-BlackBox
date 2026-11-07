@@ -25,10 +25,297 @@ jobs:
         run: |
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;29.0.13846066"
 
+      - name: Inject IMEI + IMSI Device Camouflage + Network WebView Fix
+        run: |
+          cat << 'EOF' > patch.py
+          import os
+
+          # 1. WebView ERR_CACHE_MISS & Network Fix
+          iam_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/IActivityManagerProxy.java'
+          with open(iam_path, 'r', encoding='utf-8') as f:
+              code = f.read()
+
+          target = 'if (permission.equals(Manifest.permission.ACCOUNT_MANAGER)'
+          replacement = """if (isNetworkPermission(permission)) {
+                          return PackageManager.PERMISSION_GRANTED;
+                      }
+                      if (permission.equals(Manifest.permission.ACCOUNT_MANAGER)"""
+          if target in code:
+              code = code.replace(target, replacement, 1)
+
+          check_device_target = '@ProxyMethod("checkPermission")'
+          check_device_code = """@ProxyMethod("checkPermissionForDevice")
+              public static class checkPermissionForDevice extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      String permission = (String) args[0];
+                      if (isNetworkPermission(permission) || isAudioPermission(permission) || isStorageOrMediaPermission(permission)) {
+                          return PackageManager.PERMISSION_GRANTED;
+                      }
+                      return method.invoke(who, args);
+                  }
+              }
+
+              private static boolean isNetworkPermission(String permission) {
+                  if (permission == null) return false;
+                  return permission.equals(Manifest.permission.INTERNET)
+                          || permission.equals(Manifest.permission.ACCESS_NETWORK_STATE)
+                          || permission.equals(Manifest.permission.ACCESS_WIFI_STATE)
+                          || permission.equals(Manifest.permission.CHANGE_NETWORK_STATE)
+                          || permission.equals(Manifest.permission.CHANGE_WIFI_STATE)
+                          || permission.equals("android.permission.CHANGE_WIFI_MULTICAST_STATE");
+              }
+
+              @ProxyMethod("checkPermission")"""
+
+          if check_device_target in code:
+              code = code.replace(check_device_target, check_device_code, 1)
+
+          with open(iam_path, 'w', encoding='utf-8') as f:
+              f.write(code)
+
+          # 2. IPermissionManagerProxy
+          ipm_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/IPermissionManagerProxy.java'
+          with open(ipm_path, 'r', encoding='utf-8') as f:
+              ipm_code = f.read()
+
+          ipm_target = 'addMethodHook(new PkgMethodProxy("shouldShowRequestPermissionRationale"));'
+          ipm_replacement = """addMethodHook(new PkgMethodProxy("shouldShowRequestPermissionRationale"));
+                  addMethodHook(new ValueMethodProxy("checkPermission", PackageManager.PERMISSION_GRANTED));
+                  addMethodHook(new ValueMethodProxy("checkUidPermission", PackageManager.PERMISSION_GRANTED));"""
+          if ipm_target in ipm_code:
+              ipm_code = ipm_code.replace(ipm_target, ipm_replacement, 1)
+
+          with open(ipm_path, 'w', encoding='utf-8') as f:
+              f.write(ipm_code)
+
+          # 3. DeviceSpoofProfile (IMEI + IMSI)
+          dsp_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/device/DeviceSpoofProfile.java'
+          with open(dsp_path, 'r', encoding='utf-8') as f:
+              dsp = f.read()
+          dsp = dsp.replace('public final String androidId;', 'public final String androidId;\n    public String imei = "358249110294812";\n    public String imsi = "410011234567890";')
+          with open(dsp_path, 'w', encoding='utf-8') as f:
+              f.write(dsp)
+
+          # 4. DeviceSpoofManager (IMEI + IMSI Persistence)
+          dsm_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/device/DeviceSpoofManager.java'
+          with open(dsm_path, 'r', encoding='utf-8') as f:
+              dsm = f.read()
+          dsm = dsm.replace('private static final String KEY_ANDROID_ID = "android_id_";',
+                            'private static final String KEY_IMEI = "imei_";\n    private static final String KEY_IMSI = "imsi_";\n    private static final String KEY_ANDROID_ID = "android_id_";')
+
+          target_getProfile = 'return new DeviceSpoofProfile(\n                valueOrDefault(prefs.getString(KEY_MANUFACTURER + userId, null), defaults.manufacturer),'
+          repl_getProfile = """DeviceSpoofProfile profile = new DeviceSpoofProfile(
+                          valueOrDefault(prefs.getString(KEY_MANUFACTURER + userId, null), defaults.manufacturer),"""
+          dsm = dsm.replace(target_getProfile, repl_getProfile)
+
+          target_end_profile = 'valueOrDefault(prefs.getString(KEY_ANDROID_ID + userId, null), defaults.androidId)\n        );'
+          repl_end_profile = """valueOrDefault(prefs.getString(KEY_ANDROID_ID + userId, null), defaults.androidId)
+                  );
+                  profile.imei = prefs.getString(KEY_IMEI + userId, "3582491102948" + String.format(Locale.US, "%02d", Math.abs(userId % 100)));
+                  profile.imsi = prefs.getString(KEY_IMSI + userId, "4100112345678" + String.format(Locale.US, "%02d", Math.abs(userId % 100)));
+                  return profile;"""
+          dsm = dsm.replace(target_end_profile, repl_end_profile)
+
+          dsm = dsm.replace('return new DeviceSpoofProfile(\n                "Samsung",', 'DeviceSpoofProfile profile = new DeviceSpoofProfile(\n                "Samsung",')
+          target_samsung = 'stableAndroidId("bbb_samsung_" + userId)\n        );'
+          repl_samsung = """stableAndroidId("bbb_samsung_" + userId)
+                  );
+                  profile.imei = "358249110294812";
+                  profile.imsi = "410011234567890";
+                  return profile;"""
+          dsm = dsm.replace(target_samsung, repl_samsung)
+
+          target_save = 'public static void saveUserProfile(int userId, String manufacturer, String model, String androidId) {'
+          repl_save = """public static void saveUserProfile(int userId, String manufacturer, String model, String androidId, String imei, String imsi) {
+                  Context context = BlackBoxCore.getContext();
+                  SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                  prefs.edit()
+                          .putString(KEY_MANUFACTURER + userId, manufacturer)
+                          .putString(KEY_MODEL + userId, model)
+                          .putString(KEY_ANDROID_ID + userId, androidId)
+                          .putString(KEY_IMEI + userId, imei)
+                          .putString(KEY_IMSI + userId, imsi)
+                          .commit();
+              }
+
+              public static void saveUserProfile(int userId, String manufacturer, String model, String androidId, String imei) {
+                  saveUserProfile(userId, manufacturer, model, androidId, imei, "4100112345678" + String.format(Locale.US, "%02d", Math.abs(userId % 100)));
+              }
+
+              public static void saveUserProfile(int userId, String manufacturer, String model, String androidId) {
+                  saveUserProfile(userId, manufacturer, model, androidId, "3582491102948" + String.format(Locale.US, "%02d", Math.abs(userId % 100)));
+              }
+
+              private static void unusedSaveUserProfile("""
+          dsm = dsm.replace(target_save, repl_save)
+          with open(dsm_path, 'w', encoding='utf-8') as f:
+              f.write(dsm)
+
+          # 5. ITelephonyManagerProxy
+          itm_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/ITelephonyManagerProxy.java'
+          with open(itm_path, 'r', encoding='utf-8') as f:
+              itm = f.read()
+
+          t_telephony = """@ProxyMethod("getImeiForSlot")
+              public static class getImeiForSlot extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                      top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+                      if (profile != null && !android.text.TextUtils.isEmpty(profile.imei)) {
+                          return profile.imei;
+                      }
+                      return Md5Utils.md5(BlackBoxCore.getHostPkg());
+                  }
+              }
+
+              @ProxyMethod("getDeviceId")
+              public static class GetDeviceId extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                      top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+                      if (profile != null && !android.text.TextUtils.isEmpty(profile.imei)) {
+                          return profile.imei;
+                      }
+                      return Md5Utils.md5(BlackBoxCore.getHostPkg());
+                  }
+              }
+
+              @ProxyMethod("getSubscriberId")
+              public static class GetSubscriberId extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                      top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+                      if (profile != null && !android.text.TextUtils.isEmpty(profile.imsi)) {
+                          return profile.imsi;
+                      }
+                      return "410011234567890";
+                  }
+              }
+
+              @ProxyMethod("getSubscriberIdForSubscriber")
+              public static class GetSubscriberIdForSubscriber extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                      top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+                      if (profile != null && !android.text.TextUtils.isEmpty(profile.imsi)) {
+                          return profile.imsi;
+                      }
+                      return "410011234567890";
+                  }
+              }"""
+
+          idx1 = itm.find('@ProxyMethod("getDeviceId")')
+          idx2 = itm.find('@ProxyMethod("getDeviceIdWithFeature")')
+          if idx1 != -1 and idx2 != -1:
+              itm = itm[:idx1] + t_telephony + '\n\n    ' + itm[idx2:]
+          with open(itm_path, 'w', encoding='utf-8') as f:
+              f.write(itm)
+
+          # 6. IPhoneSubInfoProxy
+          ips_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/IPhoneSubInfoProxy.java'
+          with open(ips_path, 'r', encoding='utf-8') as f:
+              ips = f.read()
+
+          sub_hook = """    @ProxyMethod("getSubscriberId")
+              public static class getSubscriberId extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                      top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+                      if (profile != null && !android.text.TextUtils.isEmpty(profile.imsi)) {
+                          return profile.imsi;
+                      }
+                      return "410011234567890";
+                  }
+              }
+
+              @ProxyMethod("getSubscriberIdForSubscriber")
+              public static class getSubscriberIdForSubscriber extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                      top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+                      if (profile != null && !android.text.TextUtils.isEmpty(profile.imsi)) {
+                          return profile.imsi;
+                      }
+                      return "410011234567890";
+                  }
+              }
+
+              @ProxyMethod("getLine1NumberForSubscriber")"""
+          ips = ips.replace('    @ProxyMethod("getLine1NumberForSubscriber")', sub_hook)
+          with open(ips_path, 'w', encoding='utf-8') as f:
+              f.write(ips)
+
+          # 7. activity_device_spoofing.xml
+          xml_path = 'app/src/main/res/layout/activity_device_spoofing.xml'
+          with open(xml_path, 'r', encoding='utf-8') as f:
+              xml = f.read()
+          imei_imsi_field = """<com.google.android.material.textfield.TextInputLayout
+                              android:layout_width="match_parent"
+                              android:layout_height="wrap_content"
+                              android:layout_marginTop="14dp"
+                              android:hint="IMEI (15 digits)">
+
+                          <com.google.android.material.textfield.TextInputEditText
+                                  android:id="@+id/device_imei_edit"
+                                  android:layout_width="match_parent"
+                                  android:layout_height="wrap_content"
+                                  android:fontFamily="monospace"
+                                  android:inputType="number"
+                                  android:maxLength="15" />
+                      </com.google.android.material.textfield.TextInputLayout>
+
+                      <com.google.android.material.textfield.TextInputLayout
+                              android:layout_width="match_parent"
+                              android:layout_height="wrap_content"
+                              android:layout_marginTop="14dp"
+                              android:hint="IMSI (15 digits)">
+
+                          <com.google.android.material.textfield.TextInputEditText
+                                  android:id="@+id/device_imsi_edit"
+                                  android:layout_width="match_parent"
+                                  android:layout_height="wrap_content"
+                                  android:fontFamily="monospace"
+                                  android:inputType="number"
+                                  android:maxLength="15" />
+                      </com.google.android.material.textfield.TextInputLayout>
+
+                      <com.google.android.material.textfield.TextInputLayout
+                              android:layout_width="match_parent"
+                              android:layout_height="wrap_content"
+                              android:layout_marginTop="14dp"
+                              android:hint="@string/device_spoofing_android_id">"""
+          xml = xml.replace('<com.google.android.material.textfield.TextInputLayout\n                    android:layout_width="match_parent"\n                    android:layout_height="wrap_content"\n                    android:layout_marginTop="14dp"\n                    android:hint="@string/device_spoofing_android_id">', imei_imsi_field)
+          with open(xml_path, 'w', encoding='utf-8') as f:
+              f.write(xml)
+
+          # 8. DeviceSpoofingActivity.kt
+          kt_path = 'app/src/main/java/com/onebitmonochrome/blacksbbox/view/spoof/DeviceSpoofingActivity.kt'
+          with open(kt_path, 'r', encoding='utf-8') as f:
+              kt = f.read()
+          kt = kt.replace('val androidId = viewBinding.androidIdEdit.text?.toString().orEmpty().trim()',
+                          'val androidId = viewBinding.androidIdEdit.text?.toString().orEmpty().trim()\n            val imei = viewBinding.deviceImeiEdit.text?.toString().orEmpty().trim()\n            val imsi = viewBinding.deviceImsiEdit.text?.toString().orEmpty().trim()')
+          kt = kt.replace('DeviceSpoofManager.saveUserProfile(currentUserID(), manufacturer, model, androidId)',
+                          'DeviceSpoofManager.saveUserProfile(currentUserID(), manufacturer, model, androidId, imei, imsi)')
+          kt = kt.replace('viewBinding.androidIdEdit.setText(profile.androidId)',
+                          'viewBinding.androidIdEdit.setText(profile.androidId)\n        viewBinding.deviceImeiEdit.setText(profile.imei)\n        viewBinding.deviceImsiEdit.setText(profile.imsi)')
+          with open(kt_path, 'w', encoding='utf-8') as f:
+              f.write(kt)
+
+          print('All patches injected 100% cleanly!')
+          EOF
+          python3 patch.py
+
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Build Debug APK
+      - name: Build Debug APK with Gradle
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK Artifact
