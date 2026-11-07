@@ -1,0 +1,100 @@
+name: Build Blacks-BlackBox All-In-One
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - name: Install NDK 29
+        run: |
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;29.0.13846066"
+
+      - name: Inject Android 15 Network & WebView ERR_CACHE_MISS Patch
+        run: |
+          python3 -c "
+          iam_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/IActivityManagerProxy.java'
+          with open(iam_path, 'r', encoding='utf-8') as f:
+              code = f.read()
+
+          target = 'if (permission.equals(Manifest.permission.ACCOUNT_MANAGER)'
+          replacement = '''if (isNetworkPermission(permission)) {
+                          return PackageManager.PERMISSION_GRANTED;
+                      }
+                      if (permission.equals(Manifest.permission.ACCOUNT_MANAGER)'''
+          if target in code:
+              code = code.replace(target, replacement, 1)
+
+          check_device_target = '@ProxyMethod(\"checkPermission\")'
+          check_device_code = '''@ProxyMethod(\"checkPermissionForDevice\")
+              public static class checkPermissionForDevice extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      String permission = (String) args[0];
+                      if (isNetworkPermission(permission) || isAudioPermission(permission) || isStorageOrMediaPermission(permission)) {
+                          return PackageManager.PERMISSION_GRANTED;
+                      }
+                      return method.invoke(who, args);
+                  }
+              }
+
+              private static boolean isNetworkPermission(String permission) {
+                  if (permission == null) return false;
+                  return permission.equals(Manifest.permission.INTERNET)
+                          || permission.equals(Manifest.permission.ACCESS_NETWORK_STATE)
+                          || permission.equals(Manifest.permission.ACCESS_WIFI_STATE)
+                          || permission.equals(Manifest.permission.CHANGE_NETWORK_STATE)
+                          || permission.equals(Manifest.permission.CHANGE_WIFI_STATE)
+                          || permission.equals(\"android.permission.CHANGE_WIFI_MULTICAST_STATE\");
+              }
+
+              @ProxyMethod(\"checkPermission\")'''
+
+          if check_device_target in code:
+              code = code.replace(check_device_target, check_device_code, 1)
+
+          with open(iam_path, 'w', encoding='utf-8') as f:
+              f.write(code)
+
+          ipm_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/IPermissionManagerProxy.java'
+          with open(ipm_path, 'r', encoding='utf-8') as f:
+              ipm_code = f.read()
+
+          ipm_target = 'addMethodHook(new PkgMethodProxy(\"shouldShowRequestPermissionRationale\"));'
+          ipm_replacement = '''addMethodHook(new PkgMethodProxy(\"shouldShowRequestPermissionRationale\"));
+                  addMethodHook(new ValueMethodProxy(\"checkPermission\", PackageManager.PERMISSION_GRANTED));
+                  addMethodHook(new ValueMethodProxy(\"checkUidPermission\", PackageManager.PERMISSION_GRANTED));'''
+          if ipm_target in ipm_code:
+              ipm_code = ipm_code.replace(ipm_target, ipm_replacement, 1)
+
+          with open(ipm_path, 'w', encoding='utf-8') as f:
+              f.write(ipm_code)
+          print('Successfully patched IActivityManagerProxy and IPermissionManagerProxy!')
+          "
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build Debug APK with Gradle
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blacks-BlackBox-AllInOne
+          path: app/build/outputs/apk/debug/*.apk
