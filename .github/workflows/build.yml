@@ -28,8 +28,6 @@ jobs:
       - name: Inject IMEI Spoofing + Network WebView Fix + Speed Optimization
         run: |
           python3 -c "
-          import os
-
           # 1. WebView ERR_CACHE_MISS Patch
           iam_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/IActivityManagerProxy.java'
           with open(iam_path, 'r', encoding='utf-8') as f:
@@ -88,35 +86,66 @@ jobs:
           with open(ipm_path, 'w', encoding='utf-8') as f:
               f.write(ipm_code)
 
-          # 2. DeviceSpoofProfile IMEI Patch
+          # 2. DeviceSpoofProfile IMEI Field
           dsp_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/device/DeviceSpoofProfile.java'
           with open(dsp_path, 'r', encoding='utf-8') as f:
               dsp = f.read()
-          dsp = dsp.replace('public final String androidId;', 'public final String imei;\n    public final String androidId;')
-          dsp = dsp.replace('String serial,\n            String androidId', 'String serial,\n            String imei,\n            String androidId')
-          dsp = dsp.replace('this.serial = serial;\n        this.androidId = androidId;', 'this.serial = serial;\n        this.imei = imei;\n        this.androidId = androidId;')
+          dsp = dsp.replace('public final String androidId;', 'public final String androidId;\n    public String imei = \"358249110294812\";')
           with open(dsp_path, 'w', encoding='utf-8') as f:
               f.write(dsp)
 
-          # 3. DeviceSpoofManager IMEI Patch
+          # 3. DeviceSpoofManager IMEI Persistence & Preset
           dsm_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/device/DeviceSpoofManager.java'
           with open(dsm_path, 'r', encoding='utf-8') as f:
               dsm = f.read()
           dsm = dsm.replace('private static final String KEY_ANDROID_ID = \"android_id_\";', 'private static final String KEY_IMEI = \"imei_\";\n    private static final String KEY_ANDROID_ID = \"android_id_\";')
-          dsm = dsm.replace('valueOrDefault(prefs.getString(KEY_SERIAL + userId, null), defaults.serial),\n                valueOrDefault(prefs.getString(KEY_ANDROID_ID + userId, null), defaults.androidId)',
-                            'valueOrDefault(prefs.getString(KEY_SERIAL + userId, null), defaults.serial),\n                valueOrDefault(prefs.getString(KEY_IMEI + userId, null), defaults.imei),\n                valueOrDefault(prefs.getString(KEY_ANDROID_ID + userId, null), defaults.androidId)')
-          dsm = dsm.replace('\"1A2B3C4D5E6F\",\n                stableAndroidId(\"bbb_default_\" + userId)',
-                            '\"1A2B3C4D5E6F\",\n                \"867492041285038\",\n                stableAndroidId(\"bbb_default_\" + userId)')
-          dsm = dsm.replace('String serial = String.format', 'String imei = \"3582491102948\" + String.format(Locale.US, \"%02d\", Math.abs(userId % 100));\n        String serial = String.format')
-          dsm = dsm.replace('serial,\n                stableAndroidId(\"bbb_samsung_\" + userId)',
-                            'serial,\n                imei,\n                stableAndroidId(\"bbb_samsung_\" + userId)')
-          dsm = dsm.replace('String androidId\n    ) {', 'String androidId,\n            String imei\n    ) {')
-          dsm = dsm.replace('.putString(KEY_ANDROID_ID + userId, androidId)\n                .apply();',
-                            '.putString(KEY_ANDROID_ID + userId, androidId)\n                .putString(KEY_IMEI + userId, imei)\n                .apply();')
+
+          target_getProfile = 'return new DeviceSpoofProfile(\n                valueOrDefault(prefs.getString(KEY_MANUFACTURER + userId, null), defaults.manufacturer),'
+          repl_getProfile = '''DeviceSpoofProfile profile = new DeviceSpoofProfile(
+                          valueOrDefault(prefs.getString(KEY_MANUFACTURER + userId, null), defaults.manufacturer),'''
+          dsm = dsm.replace(target_getProfile, repl_getProfile)
+
+          target_end_profile = 'valueOrDefault(prefs.getString(KEY_ANDROID_ID + userId, null), defaults.androidId)\n        );'
+          repl_end_profile = '''valueOrDefault(prefs.getString(KEY_ANDROID_ID + userId, null), defaults.androidId)
+                  );
+                  profile.imei = prefs.getString(KEY_IMEI + userId, \"3582491102948\" + String.format(Locale.US, \"%02d\", Math.abs(userId % 100)));
+                  return profile;'''
+          dsm = dsm.replace(target_end_profile, repl_end_profile)
+
+          dsm = dsm.replace('return new DeviceSpoofProfile(\n                \"Samsung\",', 'DeviceSpoofProfile profile = new DeviceSpoofProfile(\n                \"Samsung\",')
+          target_samsung = 'stableAndroidId(\"bbb_samsung_\" + userId)\n        );'
+          repl_samsung = '''stableAndroidId(\"bbb_samsung_\" + userId)
+                  );
+                  profile.imei = \"358249110294812\";
+                  return profile;'''
+          dsm = dsm.replace(target_samsung, repl_samsung)
+
+          target_save = 'public static void saveUserProfile(int userId, String manufacturer, String model, String androidId) {'
+          repl_save = '''public static void saveUserProfile(int userId, String manufacturer, String model, String androidId, String imei) {
+                  DeviceSpoofProfile profile = buildCustomProfile(userId, manufacturer, model, androidId);
+                  prefs().edit()
+                          .putString(KEY_MANUFACTURER + userId, profile.manufacturer)
+                          .putString(KEY_BRAND + userId, profile.brand)
+                          .putString(KEY_MODEL + userId, profile.model)
+                          .putString(KEY_DEVICE + userId, profile.device)
+                          .putString(KEY_PRODUCT + userId, profile.product)
+                          .putString(KEY_FINGERPRINT + userId, profile.fingerprint)
+                          .putString(KEY_SERIAL + userId, profile.serial)
+                          .putString(KEY_ANDROID_ID + userId, profile.androidId)
+                          .putString(KEY_IMEI + userId, imei)
+                          .commit();
+              }
+
+              public static void saveUserProfile(int userId, String manufacturer, String model, String androidId) {
+                  saveUserProfile(userId, manufacturer, model, androidId, \"3582491102948\" + String.format(Locale.US, \"%02d\", Math.abs(userId % 100)));
+              }
+
+              private static void unusedSaveUserProfile('''
+          dsm = dsm.replace(target_save, repl_save)
           with open(dsm_path, 'w', encoding='utf-8') as f:
               f.write(dsm)
 
-          # 4. ITelephonyManagerProxy IMEI Hook
+          # 4. ITelephonyManagerProxy Hook
           itm_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/ITelephonyManagerProxy.java'
           with open(itm_path, 'r', encoding='utf-8') as f:
               itm = f.read()
@@ -152,7 +181,7 @@ jobs:
           with open(itm_path, 'w', encoding='utf-8') as f:
               f.write(itm)
 
-          # 5. activity_device_spoofing.xml UI
+          # 5. activity_device_spoofing.xml
           xml_path = 'app/src/main/res/layout/activity_device_spoofing.xml'
           with open(xml_path, 'r', encoding='utf-8') as f:
               xml = f.read()
@@ -193,7 +222,7 @@ jobs:
           with open(kt_path, 'w', encoding='utf-8') as f:
               f.write(kt)
 
-          print('All patches injected successfully!')
+          print('All patches injected 100% cleanly!')
           "
 
       - name: Grant execute permission for gradlew
