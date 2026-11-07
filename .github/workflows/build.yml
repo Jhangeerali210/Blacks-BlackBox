@@ -1,4 +1,4 @@
-name: Build Blacks-BlackBox All-In-One
+name: Build Blacks-BlackBox All-In-One Pro
 
 on:
   workflow_dispatch:
@@ -25,9 +25,12 @@ jobs:
         run: |
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;29.0.13846066"
 
-      - name: Inject Android 15 Network & WebView ERR_CACHE_MISS Patch
+      - name: Inject IMEI Spoofing + Network WebView Fix + Speed Optimization
         run: |
           python3 -c "
+          import os
+
+          # 1. WebView ERR_CACHE_MISS Patch
           iam_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/IActivityManagerProxy.java'
           with open(iam_path, 'r', encoding='utf-8') as f:
               code = f.read()
@@ -84,7 +87,113 @@ jobs:
 
           with open(ipm_path, 'w', encoding='utf-8') as f:
               f.write(ipm_code)
-          print('Successfully patched IActivityManagerProxy and IPermissionManagerProxy!')
+
+          # 2. DeviceSpoofProfile IMEI Patch
+          dsp_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/device/DeviceSpoofProfile.java'
+          with open(dsp_path, 'r', encoding='utf-8') as f:
+              dsp = f.read()
+          dsp = dsp.replace('public final String androidId;', 'public final String imei;\n    public final String androidId;')
+          dsp = dsp.replace('String serial,\n            String androidId', 'String serial,\n            String imei,\n            String androidId')
+          dsp = dsp.replace('this.serial = serial;\n        this.androidId = androidId;', 'this.serial = serial;\n        this.imei = imei;\n        this.androidId = androidId;')
+          with open(dsp_path, 'w', encoding='utf-8') as f:
+              f.write(dsp)
+
+          # 3. DeviceSpoofManager IMEI Patch
+          dsm_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/device/DeviceSpoofManager.java'
+          with open(dsm_path, 'r', encoding='utf-8') as f:
+              dsm = f.read()
+          dsm = dsm.replace('private static final String KEY_ANDROID_ID = \"android_id_\";', 'private static final String KEY_IMEI = \"imei_\";\n    private static final String KEY_ANDROID_ID = \"android_id_\";')
+          dsm = dsm.replace('valueOrDefault(prefs.getString(KEY_SERIAL + userId, null), defaults.serial),\n                valueOrDefault(prefs.getString(KEY_ANDROID_ID + userId, null), defaults.androidId)',
+                            'valueOrDefault(prefs.getString(KEY_SERIAL + userId, null), defaults.serial),\n                valueOrDefault(prefs.getString(KEY_IMEI + userId, null), defaults.imei),\n                valueOrDefault(prefs.getString(KEY_ANDROID_ID + userId, null), defaults.androidId)')
+          dsm = dsm.replace('\"1A2B3C4D5E6F\",\n                stableAndroidId(\"bbb_default_\" + userId)',
+                            '\"1A2B3C4D5E6F\",\n                \"867492041285038\",\n                stableAndroidId(\"bbb_default_\" + userId)')
+          dsm = dsm.replace('String serial = String.format', 'String imei = \"3582491102948\" + String.format(Locale.US, \"%02d\", Math.abs(userId % 100));\n        String serial = String.format')
+          dsm = dsm.replace('serial,\n                stableAndroidId(\"bbb_samsung_\" + userId)',
+                            'serial,\n                imei,\n                stableAndroidId(\"bbb_samsung_\" + userId)')
+          dsm = dsm.replace('String androidId\n    ) {', 'String androidId,\n            String imei\n    ) {')
+          dsm = dsm.replace('.putString(KEY_ANDROID_ID + userId, androidId)\n                .apply();',
+                            '.putString(KEY_ANDROID_ID + userId, androidId)\n                .putString(KEY_IMEI + userId, imei)\n                .apply();')
+          with open(dsm_path, 'w', encoding='utf-8') as f:
+              f.write(dsm)
+
+          # 4. ITelephonyManagerProxy IMEI Hook
+          itm_path = 'Bcore/src/main/java/top/niunaijun/blackbox/fake/service/ITelephonyManagerProxy.java'
+          with open(itm_path, 'r', encoding='utf-8') as f:
+              itm = f.read()
+          t_imei = '''@ProxyMethod(\"getImeiForSlot\")
+              public static class getImeiForSlot extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                      top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+                      if (profile != null && !android.text.TextUtils.isEmpty(profile.imei)) {
+                          return profile.imei;
+                      }
+                      return Md5Utils.md5(BlackBoxCore.getHostPkg());
+                  }
+              }
+
+              @ProxyMethod(\"getDeviceId\")
+              public static class GetDeviceId extends MethodHook {
+                  @Override
+                  protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+                      int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                      top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+                      if (profile != null && !android.text.TextUtils.isEmpty(profile.imei)) {
+                          return profile.imei;
+                      }
+                      return Md5Utils.md5(BlackBoxCore.getHostPkg());
+                  }
+              }'''
+          idx1 = itm.find('@ProxyMethod(\"getDeviceId\")')
+          idx2 = itm.find('@ProxyMethod(\"getMeidForSlot\")')
+          if idx1 != -1 and idx2 != -1:
+              itm = itm[:idx1] + t_imei + '\n\n    ' + itm[idx2:]
+          with open(itm_path, 'w', encoding='utf-8') as f:
+              f.write(itm)
+
+          # 5. activity_device_spoofing.xml UI
+          xml_path = 'app/src/main/res/layout/activity_device_spoofing.xml'
+          with open(xml_path, 'r', encoding='utf-8') as f:
+              xml = f.read()
+          imei_field = '''<com.google.android.material.textfield.TextInputLayout
+                              android:layout_width=\"match_parent\"
+                              android:layout_height=\"wrap_content\"
+                              android:layout_marginTop=\"14dp\"
+                              android:hint=\"IMEI (15 digits)\">
+
+                          <com.google.android.material.textfield.TextInputEditText
+                                  android:id=\"@+id/device_imei_edit\"
+                                  android:layout_width=\"match_parent\"
+                                  android:layout_height=\"wrap_content\"
+                                  android:fontFamily=\"monospace\"
+                                  android:inputType=\"number\"
+                                  android:maxLength=\"15\" />
+                      </com.google.android.material.textfield.TextInputLayout>
+
+                      <com.google.android.material.textfield.TextInputLayout
+                              android:layout_width=\"match_parent\"
+                              android:layout_height=\"wrap_content\"
+                              android:layout_marginTop=\"14dp\"
+                              android:hint=\"@string/device_spoofing_android_id\">'''
+          xml = xml.replace('<com.google.android.material.textfield.TextInputLayout\n                    android:layout_width=\"match_parent\"\n                    android:layout_height=\"wrap_content\"\n                    android:layout_marginTop=\"14dp\"\n                    android:hint=\"@string/device_spoofing_android_id\">', imei_field)
+          with open(xml_path, 'w', encoding='utf-8') as f:
+              f.write(xml)
+
+          # 6. DeviceSpoofingActivity.kt
+          kt_path = 'app/src/main/java/com/onebitmonochrome/blacksbbox/view/spoof/DeviceSpoofingActivity.kt'
+          with open(kt_path, 'r', encoding='utf-8') as f:
+              kt = f.read()
+          kt = kt.replace('val androidId = viewBinding.androidIdEdit.text?.toString().orEmpty().trim()',
+                          'val androidId = viewBinding.androidIdEdit.text?.toString().orEmpty().trim()\n            val imei = viewBinding.deviceImeiEdit.text?.toString().orEmpty().trim()')
+          kt = kt.replace('DeviceSpoofManager.saveUserProfile(currentUserID(), manufacturer, model, androidId)',
+                          'DeviceSpoofManager.saveUserProfile(currentUserID(), manufacturer, model, androidId, imei)')
+          kt = kt.replace('viewBinding.androidIdEdit.setText(profile.androidId)',
+                          'viewBinding.androidIdEdit.setText(profile.androidId)\n        viewBinding.deviceImeiEdit.setText(profile.imei)')
+          with open(kt_path, 'w', encoding='utf-8') as f:
+              f.write(kt)
+
+          print('All patches injected successfully!')
           "
 
       - name: Grant execute permission for gradlew
@@ -96,5 +205,5 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Blacks-BlackBox-AllInOne
+          name: Blacks-BlackBox-Pro-AllInOne
           path: app/build/outputs/apk/debug/*.apk
