@@ -126,22 +126,28 @@ public class ITelephonyManagerProxy extends BinderInvocationStub {
         return null;
     }
 
-    @ProxyMethod("getDeviceId")
-    public static class GetDeviceId extends MethodHook {
-        @Override
-        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-
-
-            return Md5Utils.md5(BlackBoxCore.getHostPkg());
-        }
-    }
-
     @ProxyMethod("getImeiForSlot")
     public static class getImeiForSlot extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+            top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+            if (profile != null && !android.text.TextUtils.isEmpty(profile.imei)) {
+                return profile.imei;
+            }
+            return Md5Utils.md5(BlackBoxCore.getHostPkg());
+        }
+    }
 
-
+    @ProxyMethod("getDeviceId")
+    public static class GetDeviceId extends MethodHook {
+        @Override
+        protected Object hook(Object who, Method method, Object[] args) throws Throwable {
+            int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+            top.niunaijun.blackbox.fake.device.DeviceSpoofProfile profile = top.niunaijun.blackbox.fake.device.DeviceSpoofManager.getProfile(userId);
+            if (profile != null && !android.text.TextUtils.isEmpty(profile.imei)) {
+                return profile.imei;
+            }
             return Md5Utils.md5(BlackBoxCore.getHostPkg());
         }
     }
