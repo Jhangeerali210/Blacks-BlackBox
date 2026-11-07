@@ -32,6 +32,7 @@ class DeviceSpoofingActivity : BaseActivity() {
             val manufacturer = viewBinding.deviceManufacturerEdit.text?.toString().orEmpty().trim()
             val model = viewBinding.deviceModelEdit.text?.toString().orEmpty().trim()
             val androidId = viewBinding.androidIdEdit.text?.toString().orEmpty().trim()
+            val imei = viewBinding.deviceImeiEdit.text?.toString().orEmpty().trim()
 
             if (manufacturer.isBlank() || model.isBlank()) {
                 toast(R.string.device_spoofing_fill_required)
@@ -42,7 +43,7 @@ class DeviceSpoofingActivity : BaseActivity() {
                 return@setOnClickListener
             }
 
-            DeviceSpoofManager.saveUserProfile(currentUserID(), manufacturer, model, androidId)
+            DeviceSpoofManager.saveUserProfile(currentUserID(), manufacturer, model, androidId, imei)
             fillFields(DeviceSpoofManager.getProfile(currentUserID()))
             toast(R.string.device_spoofing_saved)
         }
@@ -63,6 +64,7 @@ class DeviceSpoofingActivity : BaseActivity() {
         viewBinding.deviceManufacturerEdit.setText(profile.manufacturer)
         viewBinding.deviceModelEdit.setText(profile.model)
         viewBinding.androidIdEdit.setText(profile.androidId)
+        viewBinding.deviceImeiEdit.setText(profile.imei)
     }
 
     companion object {
