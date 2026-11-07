@@ -9,6 +9,7 @@ public class DeviceSpoofProfile {
     public final String fingerprint;
     public final String serial;
     public final String androidId;
+    public String imei = "358249110294812";
 
     public DeviceSpoofProfile(
             String manufacturer,
