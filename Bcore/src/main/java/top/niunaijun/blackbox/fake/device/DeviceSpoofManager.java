@@ -99,19 +99,7 @@ public final class DeviceSpoofManager {
         saveUserProfile(userId, manufacturer, model, androidId, "3582491102948" + String.format(java.util.Locale.US, "%02d", Math.abs(userId % 100)));
     }
 
-    private static void unusedSaveUserProfile(
-        DeviceSpoofProfile profile = buildCustomProfile(userId, manufacturer, model, androidId);
-        prefs().edit()
-                .putString(KEY_MANUFACTURER + userId, profile.manufacturer)
-                .putString(KEY_BRAND + userId, profile.brand)
-                .putString(KEY_MODEL + userId, profile.model)
-                .putString(KEY_DEVICE + userId, profile.device)
-                .putString(KEY_PRODUCT + userId, profile.product)
-                .putString(KEY_FINGERPRINT + userId, profile.fingerprint)
-                .putString(KEY_SERIAL + userId, profile.serial)
-                .putString(KEY_ANDROID_ID + userId, profile.androidId)
-                .commit();
-    }
+
 
     public static void resetToDefaults(int userId) {
         prefs().edit()
