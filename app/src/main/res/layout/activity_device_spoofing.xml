@@ -66,6 +66,21 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
+                    android:hint="IMEI (15 digits)">
+
+                <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/device_imei_edit"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:inputType="number"
+                        android:maxLength="15" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
                     android:hint="@string/device_spoofing_android_id">
 
                 <com.google.android.material.textfield.TextInputEditText
