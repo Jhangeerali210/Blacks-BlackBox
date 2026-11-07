@@ -23,6 +23,7 @@ public final class DeviceSpoofManager {
     private static final String KEY_PRODUCT = "product_";
     private static final String KEY_FINGERPRINT = "fingerprint_";
     private static final String KEY_SERIAL = "serial_";
+    private static final String KEY_IMEI = "imei_";
     private static final String KEY_ANDROID_ID = "android_id_";
 
     private DeviceSpoofManager() {
@@ -37,7 +38,7 @@ public final class DeviceSpoofManager {
     public static DeviceSpoofProfile getProfile(int userId) {
         DeviceSpoofProfile defaults = getDefaultProfile(userId);
         SharedPreferences prefs = prefs();
-        return new DeviceSpoofProfile(
+        DeviceSpoofProfile profile = new DeviceSpoofProfile(
                 valueOrDefault(prefs.getString(KEY_MANUFACTURER + userId, null), defaults.manufacturer),
                 valueOrDefault(prefs.getString(KEY_BRAND + userId, null), defaults.brand),
                 valueOrDefault(prefs.getString(KEY_MODEL + userId, null), defaults.model),
@@ -47,6 +48,8 @@ public final class DeviceSpoofManager {
                 valueOrDefault(prefs.getString(KEY_SERIAL + userId, null), defaults.serial),
                 valueOrDefault(prefs.getString(KEY_ANDROID_ID + userId, null), defaults.androidId)
         );
+        profile.imei = prefs.getString(KEY_IMEI + userId, "3582491102948" + String.format(java.util.Locale.US, "%02d", Math.abs(userId % 100)));
+        return profile;
     }
 
     public static DeviceSpoofProfile getDefaultProfile(int userId) {
@@ -63,7 +66,7 @@ public final class DeviceSpoofManager {
     }
 
     public static DeviceSpoofProfile getSamsungPreset(int userId) {
-        return new DeviceSpoofProfile(
+        DeviceSpoofProfile profile = new DeviceSpoofProfile(
                 "Samsung",
                 "samsung",
                 "Galaxy S26+",
@@ -73,9 +76,30 @@ public final class DeviceSpoofManager {
                 "S26PBBX260329",
                 stableAndroidId("bbb_samsung_" + userId)
         );
+        profile.imei = "358249110294812";
+        return profile;
+    }
+
+    public static void saveUserProfile(int userId, String manufacturer, String model, String androidId, String imei) {
+        DeviceSpoofProfile profile = buildCustomProfile(userId, manufacturer, model, androidId);
+        prefs().edit()
+                .putString(KEY_MANUFACTURER + userId, profile.manufacturer)
+                .putString(KEY_BRAND + userId, profile.brand)
+                .putString(KEY_MODEL + userId, profile.model)
+                .putString(KEY_DEVICE + userId, profile.device)
+                .putString(KEY_PRODUCT + userId, profile.product)
+                .putString(KEY_FINGERPRINT + userId, profile.fingerprint)
+                .putString(KEY_SERIAL + userId, profile.serial)
+                .putString(KEY_ANDROID_ID + userId, profile.androidId)
+                .putString(KEY_IMEI + userId, imei)
+                .commit();
     }
 
     public static void saveUserProfile(int userId, String manufacturer, String model, String androidId) {
+        saveUserProfile(userId, manufacturer, model, androidId, "3582491102948" + String.format(java.util.Locale.US, "%02d", Math.abs(userId % 100)));
+    }
+
+    private static void unusedSaveUserProfile(
         DeviceSpoofProfile profile = buildCustomProfile(userId, manufacturer, model, androidId);
         prefs().edit()
                 .putString(KEY_MANUFACTURER + userId, profile.manufacturer)
